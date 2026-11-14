@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  moodle:
+    image: erseco/alpine-moodle:5.3
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SITE_URL: ${SITE_URL}
+      SSLPROXY: "true"
+      DB_TYPE: pgsql
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      MOODLE_SITENAME: ${MOODLE_SITENAME}
+      MOODLE_USERNAME: ${MOODLE_USERNAME}
+      MOODLE_PASSWORD: ${MOODLE_PASSWORD}
+      MOODLE_EMAIL: ${MOODLE_EMAIL}
+      MOODLE_LANGUAGE: fa
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_PROTOCOL: ${SMTP_PROTOCOL}
+      MOODLE_MAIL_NOREPLY_ADDRESS: ${MOODLE_MAIL_NOREPLY_ADDRESS}
+      # سقف آپلود تکالیف دانش‌آموزان (۵۰ مگابایت)
+      client_max_body_size: 50M
+      post_max_size: 50M
+      upload_max_filesize: 50M
+      memory_limit: 512M
+      max_input_vars: "5000"
+    volumes:
+      - moodledata:/var/www/moodledata
+      - moodlehtml:/var/www/html
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  db_data:
+  moodledata:
+  moodlehtml:
