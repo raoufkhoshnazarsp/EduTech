@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME}
@@ -47,7 +47,7 @@ services:
       memory_limit: 512M
       max_input_vars: "5000"
       # افزونه‌هایی که باید هنگام به‌روزرسانی Moodle حفظ شوند
-      EXTRA_PLUGIN_PATHS: "mod/customcert"
+      EXTRA_PLUGIN_PATHS: "public/mod/customcert"
     volumes:
       - moodledata:/var/www/moodledata
       - moodlehtml:/var/www/html
