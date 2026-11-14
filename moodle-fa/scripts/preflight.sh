@@ -80,7 +80,13 @@ done
 
 # اتصال به اینترنت
 if curl -fsS --max-time 10 https://api.ipify.org >/dev/null 2>&1; then
-  ok "اتصال اینترنت برقرار است (IP عمومی: $(curl -fsS --max-time 10 https://api.ipify.org))"
+  # IP ورودی همان IP کارت شبکه است؛ IP خروجی بعضی سرویس‌دهنده‌ها فرق دارد
+  NIC_IP=$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
+  OUT_IP=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)
+  ok "اتصال اینترنت برقرار است (IP ورودی سرور: ${NIC_IP:-نامعلوم})"
+  if [ -n "$OUT_IP" ] && [ -n "$NIC_IP" ] && [ "$OUT_IP" != "$NIC_IP" ]; then
+    warn "IP خروجی $OUT_IP با IP ورودی $NIC_IP فرق دارد — DNS باید روی IP ورودی تنظیم شود"
+  fi
 else
   bad "اتصال خروجی به اینترنت برقرار نیست"
 fi

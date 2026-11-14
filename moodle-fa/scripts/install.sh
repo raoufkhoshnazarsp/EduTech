@@ -59,21 +59,15 @@ esac
 # (از جمله برخی سرورهای ایران) ترافیک خروجی را از IP دیگری می‌فرستند.
 # DNS و SSL به IP ورودی نیاز دارند، پس اول آن را تشخیص می‌دهیم.
 detect_public_ip() {
-  local candidate ip
-  # ۱) IP ورودی همان اتصال SSH — مطمئن‌ترین منبع
-  if [ -n "${SSH_CONNECTION:-}" ]; then
-    ip="${SSH_CONNECTION%% *}"
-    if printf '%s' "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-      printf '%s' "$ip"; return 0
-    fi
+  local candidate ip nic_ip
+  # ۱) آدرس کارت شبکه — همان IPی که کلاینت‌ها به آن وصل می‌شوند.
+  #    (توجه: فیلد اول SSH_CONNECTION IP کلاینت است، نه سرور.)
+  nic_ip="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)"
+  if printf '%s' "$nic_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+     && ! printf '%s' "$nic_ip" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-2][0-9])\.)'; then
+    printf '%s' "$nic_ip"; return 0
   fi
-  # ۲) IP روی کارت شبکه (اگر عمومی باشد)
-  ip="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)"
-  if printf '%s' "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
-     && ! printf '%s' "$ip" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|100\.6[4-9]\.|100\.[7-9][0-9]\.|100\.1[0-2][0-9]\.)'; then
-    printf '%s' "$ip"; return 0
-  fi
-  # ۳) سرویس‌های تشخیص IP
+  # ۲) اگر کارت شبکه خصوصی بود، از سرویس تشخیص IP
   for candidate in https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com; do
     ip="$(curl -fsS --max-time 10 "$candidate" 2>/dev/null | tr -d '[:space:]')"
     if printf '%s' "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
