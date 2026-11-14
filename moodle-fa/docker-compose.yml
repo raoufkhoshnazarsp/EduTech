@@ -21,7 +21,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      SITE_URL: ${SITE_URL}
+      SITE_URL: ${SITE_URL:-http://localhost}
       SSLPROXY: "true"
       DB_TYPE: pgsql
       DB_HOST: db
@@ -46,6 +46,8 @@ services:
       upload_max_filesize: 50M
       memory_limit: 512M
       max_input_vars: "5000"
+      # افزونه‌هایی که باید هنگام به‌روزرسانی Moodle حفظ شوند
+      EXTRA_PLUGIN_PATHS: "mod/customcert"
     volumes:
       - moodledata:/var/www/moodledata
       - moodlehtml:/var/www/html
