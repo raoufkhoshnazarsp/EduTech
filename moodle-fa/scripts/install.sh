@@ -54,8 +54,44 @@ esac
 # اگر SITE_URL خالی یا IP باشد، از زیردامنه رایگان DuckDNS استفاده می‌کنیم.
 # DuckDNS در لیست دامنه‌های عمومی (PSL) است، پس Let's Encrypt برایش
 # گواهی معتبر صادر می‌کند و به سقف نرخ مشترک نمی‌خورد.
-PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+#
+# مهم: IP «خروجی» سرور همیشه همان IP «ورودی» نیست. بعضی سرویس‌دهنده‌ها
+# (از جمله برخی سرورهای ایران) ترافیک خروجی را از IP دیگری می‌فرستند.
+# DNS و SSL به IP ورودی نیاز دارند، پس اول آن را تشخیص می‌دهیم.
+detect_public_ip() {
+  local candidate ip
+  # ۱) IP ورودی همان اتصال SSH — مطمئن‌ترین منبع
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    ip="${SSH_CONNECTION%% *}"
+    if printf '%s' "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+      printf '%s' "$ip"; return 0
+    fi
+  fi
+  # ۲) IP روی کارت شبکه (اگر عمومی باشد)
+  ip="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)"
+  if printf '%s' "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+     && ! printf '%s' "$ip" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|100\.6[4-9]\.|100\.[7-9][0-9]\.|100\.1[0-2][0-9]\.)'; then
+    printf '%s' "$ip"; return 0
+  fi
+  # ۳) سرویس‌های تشخیص IP
+  for candidate in https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com; do
+    ip="$(curl -fsS --max-time 10 "$candidate" 2>/dev/null | tr -d '[:space:]')"
+    if printf '%s' "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+      printf '%s' "$ip"; return 0
+    fi
+  done
+  return 1
+}
+
+PUBLIC_IP="$(detect_public_ip || true)"
 [ -n "$PUBLIC_IP" ] || die "IP عمومی سرور تشخیص داده نشد. اتصال شبکه را بررسی کنید."
+echo "IP ورودی سرور: $PUBLIC_IP"
+
+OUTBOUND_IP="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null | tr -d '[:space:]' || true)"
+if [ -n "$OUTBOUND_IP" ] && [ "$OUTBOUND_IP" != "$PUBLIC_IP" ]; then
+  echo "توجه: IP خروجی سرور $OUTBOUND_IP است (با IP ورودی فرق دارد)."
+  echo "      برای DNS و SSL از IP ورودی $PUBLIC_IP استفاده می‌شود — که درست است."
+fi
 
 SITE_URL="${SITE_URL:-}"
 SITE_URL="${SITE_URL%/}"
