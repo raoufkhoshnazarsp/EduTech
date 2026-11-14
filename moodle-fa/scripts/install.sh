@@ -45,13 +45,57 @@ if [ ! -f .env ]; then
 fi
 
 set -a; . ./.env; set +a
-[ -n "${SITE_URL:-}" ] || die "SITE_URL در .env خالی است."
 [ -n "${MOODLE_PASSWORD:-}" ] || die "MOODLE_PASSWORD در .env خالی است."
 case "$MOODLE_PASSWORD" in
   *یک-رمز*) die "رمز مدیر را در .env عوض کنید." ;;
 esac
 
-# ---------- ۳) بالا آوردن سرویس‌ها ----------
+# ---------- ۳) تعیین آدرس سایت (بدون نیاز به خرید دامنه) ----------
+# اگر SITE_URL خالی یا IP باشد، از زیردامنه رایگان DuckDNS استفاده می‌کنیم.
+# DuckDNS در لیست دامنه‌های عمومی (PSL) است، پس Let's Encrypt برایش
+# گواهی معتبر صادر می‌کند و به سقف نرخ مشترک نمی‌خورد.
+PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+[ -n "$PUBLIC_IP" ] || die "IP عمومی سرور تشخیص داده نشد. اتصال شبکه را بررسی کنید."
+
+SITE_URL="${SITE_URL:-}"
+SITE_URL="${SITE_URL%/}"
+if [ -z "$SITE_URL" ] || printf '%s' "$SITE_URL" | grep -qE '^https?://[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+  SUB="${DUCKDNS_SUBDOMAIN:-}"
+  if [ -z "$SUB" ]; then
+    echo
+    echo "شما دامنه ندارید. یک زیردامنه رایگان DuckDNS می‌سازیم."
+    echo "  ۱) به https://www.duckdns.org بروید و با گوگل/گیت‌هاب وارد شوید"
+    echo "  ۲) یک نام انتخاب کنید (مثلاً myacademy) و در فیلد current ip مقدار $PUBLIC_IP را بگذارید"
+    echo "  ۳) همان نام را اینجا وارد کنید"
+    echo
+    read -r -p "زیردامنه DuckDNS (بدون .duckdns.org): " SUB
+  fi
+  SUB="$(printf '%s' "$SUB" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9-')"
+  [ -n "$SUB" ] || die "زیردامنه خالی است. دوباره اجرا کنید یا SITE_URL را در .env بگذارید."
+
+  AUTO_HOST="${SUB}.duckdns.org"
+  SITE_URL="https://${AUTO_HOST}"
+  say "آدرس سایت: $AUTO_HOST"
+
+  # به‌روزرسانی رکورد DNS به IP فعلی سرور
+  if [ -n "${DUCKDNS_TOKEN:-}" ]; then
+    curl -fsS "https://www.duckdns.org/update?domains=${SUB}&token=${DUCKDNS_TOKEN}&ip=${PUBLIC_IP}" >/dev/null \
+      && echo "رکورد DNS به‌روز شد." || echo "هشدار: به‌روزرسانی DNS ناموفق بود."
+  fi
+
+  # نوشتن آدرس نهایی در .env تا داکر همان را ببیند
+  if grep -q '^SITE_URL=' .env; then
+    sed -i "s|^SITE_URL=.*|SITE_URL=\"${SITE_URL}\"|" .env
+  else
+    printf 'SITE_URL="%s"\n' "$SITE_URL" >> .env
+  fi
+  export SITE_URL
+fi
+
+DOMAIN="${SITE_URL#https://}"; DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN%%/*}"
+[ -n "$DOMAIN" ] || die "آدرس سایت نامعتبر است: $SITE_URL"
+
+# ---------- ۴) بالا آوردن سرویس‌ها ----------
 say "دانلود ایمیج‌ها و راه‌اندازی (چند دقیقه طول می‌کشد)"
 docker compose pull -q
 docker compose up -d
@@ -66,7 +110,7 @@ for i in $(seq 1 60); do
 done
 sleep 10
 
-# ---------- ۴) فارسی‌سازی ----------
+# ---------- ۵) فارسی‌سازی ----------
 say "نصب بسته زبان فارسی"
 docker compose exec -T moodle sh -c '
   set -e
@@ -85,23 +129,49 @@ docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=langlis
 docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=langmenu --set=1
 docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=langcache --set=0
 
-say "فعال‌کردن ردیابی پیشرفت و تکمیل فعالیت‌ها"
+# ---------- ۶) تنظیمات آموزشی ----------
+say "فعال‌کردن ردیابی پیشرفت، نشان‌ها و کارنامه"
 docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=enablecompletion --set=1
 docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=enablebadges --set=1
 docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=enableoutcomes --set=1
 docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=enableglobalsearch --set=0
+docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=enableplagiarism --set=0
+docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=enableportfolios --set=0
+
+say "تنظیم پیش‌فرض آزمون‌ها (نمره‌دار + تمرینی)"
+# آزمون‌ها به‌صورت پیش‌فرض نمره‌دار و با نمایش نمره به دانش‌آموز
+docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=quiz_showuserpicture --set=1
+docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=gradepointdefault --set=100
+docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=grade_export_enabled --set=1
+# ثبت‌نام خودکار خاموش: فقط مدیر دانش‌آموز می‌سازد
+docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=registerauth --set=email
+docker compose exec -T moodle php /var/www/html/admin/cli/cfg.php --name=guestloginbutton --set=0
+
+# ---------- ۷) افزونه گواهی پایان دوره ----------
+say "نصب افزونه گواهی پایان دوره (Custom Certificate)"
+docker compose exec -T moodle sh -c '
+  set -e
+  cd /var/www/html/mod
+  if [ ! -d customcert ]; then
+    curl -fsSL -o cc.zip "https://github.com/mdjnelson/moodle-mod_customcert/archive/refs/heads/MOODLE_503_STABLE.zip"
+    unzip -oq cc.zip
+    mv moodle-mod_customcert-MOODLE_503_STABLE customcert
+    rm -f cc.zip
+  fi
+  test -f customcert/version.php
+' || echo "هشدار: افزونه گواهی نصب نشد. بعداً از «افزونه‌ها ← نصب افزونه» نصب کنید."
+
+docker compose exec -T moodle php /var/www/html/admin/cli/upgrade.php --non-interactive --allow-unstable \
+  || echo "هشدار: ارتقای دیتابیس برای افزونه گواهی انجام نشد."
 
 say "پاک‌سازی کش"
 docker compose exec -T moodle php /var/www/html/admin/cli/purge_caches.php
 
-# ---------- ۵) وب‌سرور و HTTPS ----------
-DOMAIN="${SITE_URL#https://}"; DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN%%/*}"
+# ---------- ۸) وب‌سرور و HTTPS ----------
+say "نصب nginx و گواهی SSL برای $DOMAIN"
+apt-get install -y -qq nginx certbot python3-certbot-nginx
 
-if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "localhost" ]; then
-  say "نصب nginx و گواهی SSL برای $DOMAIN"
-  apt-get install -y -qq nginx certbot python3-certbot-nginx
-
-  cat > /etc/nginx/sites-available/moodle <<NGINX
+cat > /etc/nginx/sites-available/moodle <<NGINX
 server {
     listen 80;
     server_name $DOMAIN;
@@ -117,18 +187,17 @@ server {
     }
 }
 NGINX
-  ln -sf /etc/nginx/sites-available/moodle /etc/nginx/sites-enabled/moodle
-  rm -f /etc/nginx/sites-enabled/default
-  nginx -t && systemctl reload nginx
+ln -sf /etc/nginx/sites-available/moodle /etc/nginx/sites-enabled/moodle
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
 
-  if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
-      --register-unsafely-without-email --redirect || \
-      echo "گواهی SSL نصب نشد. بعداً اجرا کنید: certbot --nginx -d $DOMAIN"
-  fi
+if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
+    --register-unsafely-without-email --redirect || \
+    echo "گواهی SSL نصب نشد. بعداً اجرا کنید: certbot --nginx -d $DOMAIN"
 fi
 
-# ---------- ۶) پشتیبان روزانه ----------
+# ---------- ۹) پشتیبان روزانه ----------
 say "فعال‌کردن پشتیبان‌گیری روزانه"
 install -m 755 scripts/backup.sh /usr/local/bin/moodle-backup
 mkdir -p /var/backups/moodle
