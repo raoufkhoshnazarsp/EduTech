@@ -191,10 +191,38 @@ ln -sf /etc/nginx/sites-available/moodle /etc/nginx/sites-enabled/moodle
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
-if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
-    --register-unsafely-without-email --redirect || \
-    echo "گواهی SSL نصب نشد. بعداً اجرا کنید: certbot --nginx -d $DOMAIN"
+# باز کردن پورت‌ها اگر فایروال روشن است
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  say "باز کردن پورت‌های ۸۰ و ۴۴۳ در فایروال"
+  ufw allow 80/tcp >/dev/null
+  ufw allow 443/tcp >/dev/null
+fi
+
+# بررسی اینکه دامنه واقعاً به این سرور اشاره می‌کند
+say "بررسی DNS برای $DOMAIN"
+RESOLVED=""
+for i in $(seq 1 12); do
+  RESOLVED="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')"
+  [ "$RESOLVED" = "$PUBLIC_IP" ] && break
+  sleep 5
+done
+
+if [ "$RESOLVED" != "$PUBLIC_IP" ]; then
+  echo
+  echo "هشدار: دامنه $DOMAIN به $PUBLIC_IP اشاره نمی‌کند (مقدار فعلی: ${RESOLVED:-هیچ})."
+  echo "گواهی SSL صادر نمی‌شود تا DNS درست شود."
+  echo "بعد از اصلاح DNS این را اجرا کنید:"
+  echo "    certbot --nginx -d $DOMAIN"
+  echo
+  echo "سایت فعلاً با http://$PUBLIC_IP کار می‌کند."
+else
+  if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
+      --register-unsafely-without-email --redirect || \
+      echo "گواهی SSL نصب نشد. بعداً اجرا کنید: certbot --nginx -d $DOMAIN"
+  else
+    echo "گواهی SSL از قبل موجود است."
+  fi
 fi
 
 # ---------- ۹) پشتیبان روزانه ----------
